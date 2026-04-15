@@ -32,7 +32,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     const bodyBase64 = req.body.toString("base64");
 
     // En pruebas Bold usa secret vacío, en producción usa BOLD_SECRET_KEY
-    const secretKey = process.env.NODE_ENV === "development"
+    const secretKey = process.env.NODE_ENV === ""
       ? process.env.BOLD_SECRET_KEY
       : "";
 
