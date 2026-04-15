@@ -24,9 +24,6 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) console.error("❌ Falta SUPABASE_SE
 
 // ─── Webhook de Bold ──────────────────────────────────────────────────────────
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
-  console.log("📬 WEBHOOK RECIBIDO");
-  console.log("Signature:", req.headers["x-bold-signature"]);
-
   try {
     const receivedSig = req.headers["x-bold-signature"];
     if (!receivedSig) return res.status(400).send("Falta firma");
@@ -52,20 +49,11 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     const payload = JSON.parse(req.body.toString("utf-8"));
     console.log("📬 Webhook recibido:", payload.type);
 
-    // 🔍 LOG COMPLETO para ver la estructura real de Bold
-    console.log("📦 Payload completo:", JSON.stringify(payload, null, 2));
-
     if (payload.type === "SALE_APPROVED") {
-      // Intentar extraer order_id de distintas posiciones posibles
-      const payment_id = payload.data?.payment_id ?? payload.data?.id;
-      const order_id =
-        payload.data?.order_id ??
-        payload.data?.orderId ??
-        payload.data?.metadata?.order_id ??
-        payload.data?.order?.id;
+      const payment_id = payload.data?.payment_id;
+      const order_id = payload.data?.metadata?.reference;
 
-      console.log("🔍 order_id detectado:", order_id);
-      console.log("🔍 payment_id detectado:", payment_id);
+      console.log("🔍 order_id:", order_id, "| payment_id:", payment_id);
 
       const { error } = await supabase
         .from("orders")
@@ -85,11 +73,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     }
 
     if (payload.type === "SALE_REJECTED") {
-      const order_id =
-        payload.data?.order_id ??
-        payload.data?.orderId ??
-        payload.data?.metadata?.order_id ??
-        payload.data?.order?.id;
+      const order_id = payload.data?.metadata?.reference;
 
       console.log("🔍 order_id rechazado:", order_id);
 
