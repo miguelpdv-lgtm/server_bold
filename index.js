@@ -23,6 +23,7 @@ if (!process.env.SUPABASE_URL)              console.error("❌ Falta SUPABASE_UR
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) console.error("❌ Falta SUPABASE_SERVICE_ROLE_KEY");
 
 // ─── Webhook de Bold ──────────────────────────────────────────────────────────
+// ⚠️ DEBE ir ANTES de app.use(express.json())
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   try {
     const receivedSig = req.headers["x-bold-signature"];
@@ -166,6 +167,21 @@ app.post("/create-order", async (req, res) => {
     console.error(error);
     res.status(500).json({ error: "Error creando orden" });
   }
+});
+
+// ─── Consultar estado de orden ────────────────────────────────────────────────
+app.get("/order-status/:orderId", async (req, res) => {
+  const { orderId } = req.params;
+
+  const { data, error } = await supabase
+    .from("orders")
+    .select("estado_pago, nombre_completo, email, items, subtotal, envio, total, direccion, barrio, bold_transaction_id")
+    .eq("bold_order_id", orderId)
+    .single();
+
+  if (error || !data) return res.status(404).json({ error: "Orden no encontrada" });
+
+  res.json(data);
 });
 
 // ─── Health check ─────────────────────────────────────────────────────────────
