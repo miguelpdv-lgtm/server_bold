@@ -23,18 +23,16 @@ if (!process.env.SUPABASE_URL)              console.error("❌ Falta SUPABASE_UR
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) console.error("❌ Falta SUPABASE_SERVICE_ROLE_KEY");
 
 // ─── Webhook de Bold ──────────────────────────────────────────────────────────
-// ⚠️ DEBE ir ANTES de app.use(express.json())
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  console.log("📬 WEBHOOK RECIBIDO");
+  console.log("Signature:", req.headers["x-bold-signature"]);
+
   try {
     const receivedSig = req.headers["x-bold-signature"];
     if (!receivedSig) return res.status(400).send("Falta firma");
 
     const bodyBase64 = req.body.toString("base64");
-
-    // En pruebas Bold usa secret vacío, en producción usa BOLD_SECRET_KEY
-    const secretKey = process.env.NODE_ENV === ""
-      ? process.env.BOLD_SECRET_KEY
-      : "";
+    const secretKey = process.env.BOLD_WEBHOOK_SECRET ?? "";
 
     const hashed = crypto
       .createHmac("sha256", secretKey)
@@ -54,8 +52,20 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     const payload = JSON.parse(req.body.toString("utf-8"));
     console.log("📬 Webhook recibido:", payload.type);
 
+    // 🔍 LOG COMPLETO para ver la estructura real de Bold
+    console.log("📦 Payload completo:", JSON.stringify(payload, null, 2));
+
     if (payload.type === "SALE_APPROVED") {
-      const { order_id, payment_id } = payload.data;
+      // Intentar extraer order_id de distintas posiciones posibles
+      const payment_id = payload.data?.payment_id ?? payload.data?.id;
+      const order_id =
+        payload.data?.order_id ??
+        payload.data?.orderId ??
+        payload.data?.metadata?.order_id ??
+        payload.data?.order?.id;
+
+      console.log("🔍 order_id detectado:", order_id);
+      console.log("🔍 payment_id detectado:", payment_id);
 
       const { error } = await supabase
         .from("orders")
@@ -75,7 +85,13 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     }
 
     if (payload.type === "SALE_REJECTED") {
-      const { order_id } = payload.data;
+      const order_id =
+        payload.data?.order_id ??
+        payload.data?.orderId ??
+        payload.data?.metadata?.order_id ??
+        payload.data?.order?.id;
+
+      console.log("🔍 order_id rechazado:", order_id);
 
       const { error } = await supabase
         .from("orders")
@@ -88,11 +104,10 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
       if (error) {
         console.error("❌ Error actualizando orden rechazada:", error.message);
       } else {
-        console.log(`❌ Orden ${order_id} marcada como error (rechazada).`);
+        console.log(`❌ Orden ${order_id} marcada como error.`);
       }
     }
 
-    // Bold requiere 200 en menos de 2 segundos
     return res.status(200).send("OK");
   } catch (err) {
     console.error("❌ Error en webhook:", err.message);
@@ -100,17 +115,17 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
   }
 });
 
-// ─── Parser JSON para las demás rutas ─────────────────────────────────────────
+// ─── Parser JSON ──────────────────────────────────────────────────────────────
 app.use(express.json());
 
-// ─── Generar firma de integridad ───────────────────────────────────────────────
+// ─── Generar firma de integridad ──────────────────────────────────────────────
 function generateSignature(orderId, amount, currency) {
   const secret = process.env.BOLD_SECRET_KEY;
   const raw = `${orderId}${amount}${currency}${secret}`;
   return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
-// ─── Crear orden ───────────────────────────────────────────────────────────────
+// ─── Crear orden ──────────────────────────────────────────────────────────────
 app.post("/create-order", async (req, res) => {
   try {
     const {
@@ -136,7 +151,6 @@ app.post("/create-order", async (req, res) => {
     const amount = String(total);
     const signature = generateSignature(orderId, amount, "COP");
 
-    // 💾 Guardar en Supabase con estado pendiente
     const { error: dbError } = await supabase.from("orders").insert({
       bold_order_id: orderId,
       nombre_completo,
@@ -170,12 +184,12 @@ app.post("/create-order", async (req, res) => {
   }
 });
 
-// ─── Health check (Railway lo usa para saber si el servidor está vivo) ─────────
+// ─── Health check ─────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
   res.send("🚀 Servidor Emarizos corriendo");
 });
 
-// ─── Start ─────────────────────────────────────────────────────────────────────
+// ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
 });
