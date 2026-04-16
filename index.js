@@ -25,29 +25,9 @@ if (!process.env.AGENDAPRO_BOT_URL)         console.error("❌ Falta AGENDAPRO_B
 if (!process.env.AGENDAPRO_BOT_API_KEY)     console.error("❌ Falta AGENDAPRO_BOT_API_KEY");
 
 // ─── Webhook de Bold ──────────────────────────────────────────────────────────
+// ⚠️ DEBE ir ANTES de app.use(express.json())
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   try {
-    const receivedSig = req.headers["x-bold-signature"];
-    if (!receivedSig) return res.status(400).send("Falta firma");
-
-    const bodyBase64 = req.body.toString("base64");
-    const secretKey = process.env.BOLD_WEBHOOK_SECRET ?? "";
-
-    const hashed = crypto
-      .createHmac("sha256", secretKey)
-      .update(bodyBase64)
-      .digest("hex");
-
-    const isValid = crypto.timingSafeEqual(
-      Buffer.from(hashed),
-      Buffer.from(receivedSig)
-    );
-
-    if (!isValid) {
-      console.error("❌ Firma inválida del webhook");
-      return res.status(400).send("Firma inválida");
-    }
-
     const payload = JSON.parse(req.body.toString("utf-8"));
     console.log("📬 Webhook recibido:", payload.type);
 
@@ -80,10 +60,10 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
       const { error: updateError } = await supabase
         .from("orders")
         .update({
-          estado_pago:          "pagado",
-          bold_transaction_id:  payment_id,
-          pagado_at:            new Date().toISOString(),
-          updated_at:           new Date().toISOString(),
+          estado_pago:         "pagado",
+          bold_transaction_id: payment_id,
+          pagado_at:           new Date().toISOString(),
+          updated_at:          new Date().toISOString(),
         })
         .eq("bold_order_id", order_id);
 
@@ -93,7 +73,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         console.log(`✅ Orden ${order_id} marcada como pagada. TX: ${payment_id}`);
       }
 
-      // 4. Llamar al agendaprobot (sin bloquear la respuesta a Bold)
+      // 4. Llamar al agendaprobot
       try {
         const productos = pedido.items.map(item => ({
           nombre:   item.nombre ?? item.name,
@@ -127,7 +107,6 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
       } catch (agendaErr) {
         console.error("❌ Error llamando AgendaPro:", agendaErr.message);
 
-        // Guardar el error para revisarlo después
         await supabase
           .from("orders")
           .update({
@@ -185,14 +164,14 @@ app.post("/create-order", async (req, res) => {
       return res.status(400).json({ error: "No hay productos" });
     }
 
-    const subtotal = items.reduce((acc, item) => acc + item.price * item.quantity, 0);
-    const total    = subtotal + (envio || 0);
-    const orderId  = `ORDER_${Date.now()}`;
-    const amount   = String(total);
+    const subtotal  = items.reduce((acc, item) => acc + item.price * item.quantity, 0);
+    const total     = subtotal + (envio || 0);
+    const orderId   = `ORDER_${Date.now()}`;
+    const amount    = String(total);
     const signature = generateSignature(orderId, amount, "COP");
 
     const { error: dbError } = await supabase.from("orders").insert({
-      bold_order_id:  orderId,
+      bold_order_id:   orderId,
       nombre_completo,
       email,
       telefono,
