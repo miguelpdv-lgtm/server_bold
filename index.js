@@ -66,10 +66,7 @@ async function findOrder({ order_id, payment_id }) {
       .eq("bold_order_id", order_id)
       .maybeSingle();
 
-    if (error) {
-      console.error("❌ Error buscando por bold_order_id:", error.message);
-    }
-
+    if (error) console.error("❌ Error buscando por bold_order_id:", error.message);
     if (data) return data;
   }
 
@@ -80,10 +77,7 @@ async function findOrder({ order_id, payment_id }) {
       .eq("bold_transaction_id", payment_id)
       .maybeSingle();
 
-    if (error) {
-      console.error("❌ Error buscando por bold_transaction_id:", error.message);
-    }
-
+    if (error) console.error("❌ Error buscando por bold_transaction_id:", error.message);
     if (data) return data;
   }
 
@@ -93,12 +87,10 @@ async function findOrder({ order_id, payment_id }) {
 // ─── Correos ──────────────────────────────────────────────────────────────────
 function buildClienteHTML(pedido, order_id) {
   const fecha = formatFecha(pedido.created_at);
-
   const itemsHTML = (pedido.items || []).map(item => {
     const nombre = item.nombre ?? item.name;
     const cantidad = item.cantidad ?? item.quantity;
     const precio = (item.price ?? item.precio ?? 0) * cantidad;
-
     return `
       <tr>
         <td style="padding:8px 12px;border-bottom:1px solid #eee;">${nombre}</td>
@@ -113,65 +105,38 @@ function buildClienteHTML(pedido, order_id) {
         <h1 style="color:#fff;margin:0;font-size:22px;">Gracias por tu compra!</h1>
         <p style="color:#fff;margin:8px 0 0;font-size:14px;">${fecha}</p>
       </div>
-
       <div style="padding:24px;">
         <p>Hola <strong>${pedido.nombre_completo}</strong>,</p>
         <p>Hemos recibido tu pago correctamente. Aqui estan los detalles de tu pedido:</p>
-
         <table style="width:100%;border-collapse:collapse;margin:16px 0;">
-          <thead>
-            <tr style="background:#f5f5f5;">
-              <th style="padding:8px 12px;text-align:left;">Producto</th>
-              <th style="padding:8px 12px;text-align:center;">Cant.</th>
-              <th style="padding:8px 12px;text-align:right;">Subtotal</th>
-            </tr>
-          </thead>
+          <thead><tr style="background:#f5f5f5;">
+            <th style="padding:8px 12px;text-align:left;">Producto</th>
+            <th style="padding:8px 12px;text-align:center;">Cant.</th>
+            <th style="padding:8px 12px;text-align:right;">Subtotal</th>
+          </tr></thead>
           <tbody>${itemsHTML}</tbody>
         </table>
-
         <table style="width:100%;margin-top:8px;">
-          <tr>
-            <td style="padding:4px 12px;">Subtotal</td>
-            <td style="padding:4px 12px;text-align:right;">&#36;${formatCOP(pedido.subtotal)}</td>
-          </tr>
-          <tr>
-            <td style="padding:4px 12px;">Envio</td>
-            <td style="padding:4px 12px;text-align:right;">&#36;${formatCOP(pedido.envio ?? 0)}</td>
-          </tr>
-          <tr style="font-weight:bold;font-size:16px;">
-            <td style="padding:8px 12px;">Total pagado</td>
-            <td style="padding:8px 12px;text-align:right;">&#36;${formatCOP(pedido.total)} COP</td>
-          </tr>
+          <tr><td style="padding:4px 12px;">Subtotal</td><td style="padding:4px 12px;text-align:right;">&#36;${formatCOP(pedido.subtotal)}</td></tr>
+          <tr><td style="padding:4px 12px;">Envio</td><td style="padding:4px 12px;text-align:right;">&#36;${formatCOP(pedido.envio ?? 0)}</td></tr>
+          <tr style="font-weight:bold;font-size:16px;"><td style="padding:8px 12px;">Total pagado</td><td style="padding:8px 12px;text-align:right;">&#36;${formatCOP(pedido.total)} COP</td></tr>
         </table>
-
-        ${pedido.direccion ? `
-        <p style="margin-top:16px;">
-          <strong>Direccion de entrega:</strong><br/>
-          ${pedido.direccion}${pedido.barrio ? `, ${pedido.barrio}` : ""}
-        </p>` : ""}
-
-        <p style="margin-top:16px;font-size:13px;color:#666;">
-          No. de orden: <code>${order_id}</code>
-        </p>
-
+        ${pedido.direccion ? `<p style="margin-top:16px;"><strong>Direccion de entrega:</strong><br/>${pedido.direccion}${pedido.barrio ? `, ${pedido.barrio}` : ""}</p>` : ""}
+        <p style="margin-top:16px;font-size:13px;color:#666;">No. de orden: <code>${order_id}</code></p>
         <p>Si tienes alguna pregunta, responde a este correo. Nos vemos pronto!</p>
       </div>
-
       <div style="background:#f5f5f5;padding:16px;text-align:center;font-size:12px;color:#999;">
         &copy; ${new Date().getFullYear()} Emarizos &middot; Todos los derechos reservados
       </div>
-    </div>
-  `;
+    </div>`;
 }
 
 function buildAdminHTML(pedido, order_id, payment_id) {
   const fecha = formatFecha(pedido.created_at);
-
   const itemsHTML = (pedido.items || []).map(item => {
     const nombre = item.nombre ?? item.name;
     const cantidad = item.cantidad ?? item.quantity;
     const precio = (item.price ?? item.precio ?? 0) * cantidad;
-
     return `
       <tr>
         <td style="padding:8px 12px;border-bottom:1px solid #eee;">${nombre}</td>
@@ -186,12 +151,8 @@ function buildAdminHTML(pedido, order_id, payment_id) {
         <h1 style="color:#fff;margin:0;font-size:22px;">Nuevo pedido pagado!</h1>
         <p style="color:#aaa;margin:8px 0 0;font-size:14px;">${fecha}</p>
       </div>
-
       <div style="padding:24px;">
-        <p style="background:#fef08a;padding:8px 12px;border-radius:6px;font-weight:bold;color:#854d0e;display:inline-block;">
-          ESTADO DE ENVIO: PENDIENTE
-        </p>
-
+        <p style="background:#fef08a;padding:8px 12px;border-radius:6px;font-weight:bold;color:#854d0e;display:inline-block;">ESTADO DE ENVIO: PENDIENTE</p>
         <h3 style="margin-top:20px;">Datos del cliente</h3>
         <table style="width:100%;border-collapse:collapse;">
           <tr><td style="padding:4px 0;"><strong>Nombre:</strong></td><td>${pedido.nombre_completo}</td></tr>
@@ -199,50 +160,44 @@ function buildAdminHTML(pedido, order_id, payment_id) {
           <tr><td style="padding:4px 0;"><strong>Telefono:</strong></td><td>${pedido.telefono ?? "No proporcionado"}</td></tr>
           <tr><td style="padding:4px 0;"><strong>Direccion:</strong></td><td>${pedido.direccion ?? ""}${pedido.barrio ? `, ${pedido.barrio}` : ""}</td></tr>
         </table>
-
         <h3 style="margin-top:20px;">Detalle del pedido</h3>
         <table style="width:100%;border-collapse:collapse;margin:8px 0;">
-          <thead>
-            <tr style="background:#f5f5f5;">
-              <th style="padding:8px 12px;text-align:left;">Producto</th>
-              <th style="padding:8px 12px;text-align:center;">Cant.</th>
-              <th style="padding:8px 12px;text-align:right;">Subtotal</th>
-            </tr>
-          </thead>
+          <thead><tr style="background:#f5f5f5;">
+            <th style="padding:8px 12px;text-align:left;">Producto</th>
+            <th style="padding:8px 12px;text-align:center;">Cant.</th>
+            <th style="padding:8px 12px;text-align:right;">Subtotal</th>
+          </tr></thead>
           <tbody>${itemsHTML}</tbody>
         </table>
-
         <table style="width:100%;margin-top:8px;">
-          <tr>
-            <td style="padding:4px 12px;">Subtotal</td>
-            <td style="padding:4px 12px;text-align:right;">&#36;${formatCOP(pedido.subtotal)}</td>
-          </tr>
-          <tr>
-            <td style="padding:4px 12px;">Envio</td>
-            <td style="padding:4px 12px;text-align:right;">&#36;${formatCOP(pedido.envio ?? 0)}</td>
-          </tr>
-          <tr style="font-weight:bold;font-size:16px;">
-            <td style="padding:8px 12px;">Total a despachar</td>
-            <td style="padding:8px 12px;text-align:right;">&#36;${formatCOP(pedido.total)} COP</td>
-          </tr>
+          <tr><td style="padding:4px 12px;">Subtotal</td><td style="padding:4px 12px;text-align:right;">&#36;${formatCOP(pedido.subtotal)}</td></tr>
+          <tr><td style="padding:4px 12px;">Envio</td><td style="padding:4px 12px;text-align:right;">&#36;${formatCOP(pedido.envio ?? 0)}</td></tr>
+          <tr style="font-weight:bold;font-size:16px;"><td style="padding:8px 12px;">Total a despachar</td><td style="padding:8px 12px;text-align:right;">&#36;${formatCOP(pedido.total)} COP</td></tr>
         </table>
-
-        <p style="margin-top:16px;font-size:13px;color:#666;">
-          No. de orden: <code>${order_id}</code><br/>
-          Transaccion Bold: <code>${payment_id ?? "N/A"}</code>
-        </p>
+        <p style="margin-top:16px;font-size:13px;color:#666;">No. de orden: <code>${order_id}</code><br/>Transaccion Bold: <code>${payment_id ?? "N/A"}</code></p>
       </div>
-
-      <div style="background:#f5f5f5;padding:16px;text-align:center;font-size:12px;color:#999;">
-        Sistema interno Emarizos
-      </div>
-    </div>
-  `;
+      <div style="background:#f5f5f5;padding:16px;text-align:center;font-size:12px;color:#999;">Sistema interno Emarizos</div>
+    </div>`;
 }
 
+// ─── FIX 1: GET /webhook — para verificación de Bold ─────────────────────────
+app.get("/webhook", (_req, res) => {
+  res.status(200).send("OK");
+});
+
 // ─── Webhook de Bold ──────────────────────────────────────────────────────────
-app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+// FIX 2: type: "*/*" para aceptar cualquier Content-Type que Bold envíe
+app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
+  // FIX 3: Responder 200 inmediatamente para evitar timeouts de Bold
+  res.status(200).send("OK");
+
   try {
+    // FIX 4: Verificar que req.body es un Buffer válido
+    if (!req.body || !Buffer.isBuffer(req.body)) {
+      console.error("❌ req.body vacío o inválido, tipo:", typeof req.body);
+      return;
+    }
+
     const rawBody = req.body.toString("utf-8");
     const payload = JSON.parse(rawBody);
 
@@ -252,10 +207,9 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     if (payload.type === "SALE_APPROVED") {
       const { payment_id, order_id } = extractBoldIds(payload);
 
-      // ✨ Verificamos si la orden proviene de la web (debe empezar con "ORDER_")
       if (!order_id || !String(order_id).startsWith("ORDER_")) {
         console.log(`🔌 Ignorando compra de Datáfono/Externa. TX: ${payment_id || "N/A"} - Ref: ${order_id || "N/A"}`);
-        return res.status(200).send("OK");
+        return;
       }
 
       console.log("🔍 order_id:", order_id, "| payment_id:", payment_id);
@@ -268,14 +222,14 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
           payment_id,
           boldReference: payload?.data?.metadata?.reference ?? null,
         });
-        return res.status(200).send("OK");
+        return;
       }
 
       const resolvedOrderId = pedido.bold_order_id;
 
       if (pedido.estado_pago === "pagado" || pedido.estado_pago === "sincronizado") {
         console.log(`⏭️ Pedido ${resolvedOrderId} ya procesado, se omite`);
-        return res.status(200).send("OK");
+        return;
       }
 
       const updatePayload = {
@@ -295,7 +249,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 
       if (updateError) {
         console.error("❌ Error actualizando orden:", updateError.message);
-        return res.status(500).send("Error actualizando orden");
+        return;
       }
 
       console.log(`✅ Orden ${resolvedOrderId} marcada como pagada. TX: ${payment_id}`);
@@ -313,11 +267,8 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
               subject: `Confirmacion de tu pedido en Emarizos - ${resolvedOrderId}`,
               html: buildClienteHTML(pedido, resolvedOrderId),
             }).then(({ data, error }) => {
-              if (error) {
-                console.error("❌ Error correo cliente:", error);
-              } else {
-                console.log(`✅ Correo cliente enviado a ${pedido.email} (ID: ${data?.id})`);
-              }
+              if (error) console.error("❌ Error correo cliente:", error);
+              else console.log(`✅ Correo cliente enviado a ${pedido.email} (ID: ${data?.id})`);
             })
           );
         } else {
@@ -332,11 +283,8 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
               subject: `Nuevo pedido pagado - ${resolvedOrderId}`,
               html: buildAdminHTML(pedido, resolvedOrderId, payment_id),
             }).then(({ data, error }) => {
-              if (error) {
-                console.error("❌ Error correo admin:", error);
-              } else {
-                console.log(`✅ Correo admin enviado a ${adminEmail} (ID: ${data?.id})`);
-              }
+              if (error) console.error("❌ Error correo admin:", error);
+              else console.log(`✅ Correo admin enviado a ${adminEmail} (ID: ${data?.id})`);
             })
           );
         }
@@ -371,15 +319,9 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         });
 
         let agendaData = null;
-        try {
-          agendaData = await agendaRes.json();
-        } catch {
-          agendaData = null;
-        }
+        try { agendaData = await agendaRes.json(); } catch { agendaData = null; }
 
-        if (!agendaRes.ok) {
-          throw new Error(`AgendaPro HTTP ${agendaRes.status}`);
-        }
+        if (!agendaRes.ok) throw new Error(`AgendaPro HTTP ${agendaRes.status}`);
 
         console.log("✅ Respuesta AgendaPro:", agendaData);
 
@@ -388,25 +330,12 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         const fueSoloEncolado = agendaMensaje.includes("encolada");
 
         if (agendaOk) {
-          await supabase
-            .from("orders")
-            .update({
-              r_agendapro: true,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", pedido.id);
+          await supabase.from("orders").update({ r_agendapro: true, updated_at: new Date().toISOString() }).eq("id", pedido.id);
 
           if (fueSoloEncolado) {
-            console.log(`⏳ Pedido ${resolvedOrderId} enviado a cola de AgendaPro, pero no se marca como sincronizado aún`);
+            console.log(`⏳ Pedido ${resolvedOrderId} encolado en AgendaPro`);
           } else {
-            await supabase
-              .from("orders")
-              .update({
-                estado_pago: "sincronizado",
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", pedido.id);
-
+            await supabase.from("orders").update({ estado_pago: "sincronizado", updated_at: new Date().toISOString() }).eq("id", pedido.id);
             console.log(`✅ Pedido ${resolvedOrderId} sincronizado con AgendaPro`);
           }
         } else {
@@ -414,53 +343,35 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         }
       } catch (agendaErr) {
         console.error("❌ Error llamando AgendaPro:", agendaErr.message);
-
-        await supabase
-          .from("orders")
-          .update({
-            agendapro_error: agendaErr.message,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", pedido.id);
+        await supabase.from("orders").update({ agendapro_error: agendaErr.message, updated_at: new Date().toISOString() }).eq("id", pedido.id);
       }
     }
 
     if (payload.type === "SALE_REJECTED") {
       const { order_id } = extractBoldIds(payload);
-      
-      // ✨ Verificamos si la orden proviene de la web
+
       if (!order_id || !String(order_id).startsWith("ORDER_")) {
         console.log(`🔌 Ignorando rechazo de Datáfono/Externa. Ref: ${order_id || "N/A"}`);
-        return res.status(200).send("OK");
+        return;
       }
 
       console.log("🔍 order_id rechazado:", order_id);
 
-      if (order_id) {
-        const { error } = await supabase
-          .from("orders")
-          .update({
-            estado_pago: "error",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("bold_order_id", order_id);
+      const { error } = await supabase
+        .from("orders")
+        .update({ estado_pago: "error", updated_at: new Date().toISOString() })
+        .eq("bold_order_id", order_id);
 
-        if (error) {
-          console.error("❌ Error actualizando orden rechazada:", error.message);
-        } else {
-          console.log(`❌ Orden ${order_id} marcada como error.`);
-        }
-      }
+      if (error) console.error("❌ Error actualizando orden rechazada:", error.message);
+      else console.log(`❌ Orden ${order_id} marcada como error.`);
     }
 
-    return res.status(200).send("OK");
   } catch (err) {
     console.error("❌ Error en webhook:", err.message);
-    return res.status(500).send("Error interno");
   }
 });
 
-// ─── Parser JSON ──────────────────────────────────────────────────────────────
+// ─── Parser JSON (debe ir DESPUÉS del webhook) ────────────────────────────────
 app.use(express.json());
 
 // ─── Generar firma de integridad ──────────────────────────────────────────────
@@ -473,22 +384,9 @@ function generateSignature(orderId, amount, currency) {
 // ─── Crear orden ──────────────────────────────────────────────────────────────
 app.post("/create-order", async (req, res) => {
   try {
-    const {
-      nombre_completo,
-      email,
-      telefono,
-      direccion,
-      barrio,
-      ciudad,
-      departamento,
-      notas,
-      items,
-      envio
-    } = req.body;
+    const { nombre_completo, email, telefono, direccion, barrio, ciudad, departamento, notas, items, envio } = req.body;
 
-    if (!items || items.length === 0) {
-      return res.status(400).json({ error: "No hay productos" });
-    }
+    if (!items || items.length === 0) return res.status(400).json({ error: "No hay productos" });
 
     const subtotal = items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
     const total = subtotal + (envio || 0);
@@ -551,9 +449,7 @@ app.get("/order-status/:orderId", async (req, res) => {
       return res.status(500).json({ error: "Error consultando orden" });
     }
 
-    if (!data) {
-      return res.status(404).json({ error: "Orden no encontrada" });
-    }
+    if (!data) return res.status(404).json({ error: "Orden no encontrada" });
 
     return res.json(data);
   } catch (err) {
