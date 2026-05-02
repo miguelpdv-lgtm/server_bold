@@ -84,6 +84,22 @@ async function findOrder({ order_id, payment_id }) {
   return null;
 }
 
+// ─── Retry rápido: busca la orden cada 3s por hasta 60s ──────────────────────
+async function findOrderWithRetry({ order_id, payment_id }, maxWaitMs = 60_000) {
+  const interval = 3_000;
+  const start = Date.now();
+
+  while (Date.now() - start < maxWaitMs) {
+    const pedido = await findOrder({ order_id, payment_id });
+    if (pedido) return pedido;
+
+    console.log(`⏳ Orden ${order_id} no encontrada aún, reintentando en 3s...`);
+    await new Promise((r) => setTimeout(r, interval));
+  }
+
+  return null;
+}
+
 // ─── Correos ──────────────────────────────────────────────────────────────────
 function buildClienteHTML(pedido, order_id) {
   const fecha = formatFecha(pedido.created_at);
@@ -180,19 +196,193 @@ function buildAdminHTML(pedido, order_id, payment_id) {
     </div>`;
 }
 
-// ─── FIX 1: GET /webhook — para verificación de Bold ─────────────────────────
+// ─── Lógica principal de venta aprobada (reutilizable) ───────────────────────
+async function processApprovedSale(pedido, payment_id) {
+  const resolvedOrderId = pedido.bold_order_id;
+
+  if (pedido.estado_pago === "pagado" || pedido.estado_pago === "sincronizado") {
+    console.log(`⏭️ Pedido ${resolvedOrderId} ya procesado, se omite`);
+    return;
+  }
+
+  const updatePayload = {
+    estado_pago: "pagado",
+    pagado_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  if (payment_id && !pedido.bold_transaction_id) {
+    updatePayload.bold_transaction_id = payment_id;
+  }
+
+  const { error: updateError } = await supabase
+    .from("orders")
+    .update(updatePayload)
+    .eq("id", pedido.id);
+
+  if (updateError) {
+    console.error("❌ Error actualizando orden:", updateError.message);
+    return;
+  }
+
+  console.log(`✅ Orden ${resolvedOrderId} marcada como pagada. TX: ${payment_id}`);
+
+  // ── Correos ────────────────────────────────────────────────────────────────
+  try {
+    const emailFrom = process.env.EMAIL_FROM;
+    const adminEmail = process.env.ADMIN_EMAIL;
+    const correosAEnviar = [];
+
+    if (pedido.email) {
+      correosAEnviar.push(
+        resend.emails.send({
+          from: `Emarizos <${emailFrom}>`,
+          to: pedido.email,
+          subject: `Confirmacion de tu pedido en Emarizos - ${resolvedOrderId}`,
+          html: buildClienteHTML(pedido, resolvedOrderId),
+        }).then(({ data, error }) => {
+          if (error) console.error("❌ Error correo cliente:", error);
+          else console.log(`✅ Correo cliente enviado a ${pedido.email} (ID: ${data?.id})`);
+        })
+      );
+    } else {
+      console.log(`⚠️ Orden ${resolvedOrderId} sin email de cliente.`);
+    }
+
+    if (adminEmail) {
+      correosAEnviar.push(
+        resend.emails.send({
+          from: `Sistema Emarizos <${emailFrom}>`,
+          to: adminEmail,
+          subject: `Nuevo pedido pagado - ${resolvedOrderId}`,
+          html: buildAdminHTML(pedido, resolvedOrderId, payment_id),
+        }).then(({ data, error }) => {
+          if (error) console.error("❌ Error correo admin:", error);
+          else console.log(`✅ Correo admin enviado a ${adminEmail} (ID: ${data?.id})`);
+        })
+      );
+    }
+
+    await Promise.all(correosAEnviar);
+  } catch (emailErr) {
+    console.error("❌ Error enviando correos:", emailErr.message);
+  }
+
+  // ── AgendaPro ──────────────────────────────────────────────────────────────
+  try {
+    const productos = (pedido.items || []).map(item => ({
+      nombre: item.nombre ?? item.name,
+      cantidad: item.cantidad ?? item.quantity,
+    }));
+
+    const agendaRes = await fetch(`${process.env.AGENDAPRO_BOT_URL}/venta`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.AGENDAPRO_BOT_API_KEY,
+      },
+      body: JSON.stringify({
+        order_id: resolvedOrderId,
+        payment_id,
+        productos,
+        cliente: {
+          nombre_completo: pedido.nombre_completo,
+          email: pedido.email,
+          telefono: pedido.telefono,
+        },
+      }),
+    });
+
+    let agendaData = null;
+    try { agendaData = await agendaRes.json(); } catch { agendaData = null; }
+
+    if (!agendaRes.ok) throw new Error(`AgendaPro HTTP ${agendaRes.status}`);
+
+    console.log("✅ Respuesta AgendaPro:", agendaData);
+
+    const agendaOk = agendaData?.ok === true;
+    const agendaMensaje = String(agendaData?.mensaje || "").toLowerCase();
+    const fueSoloEncolado = agendaMensaje.includes("encolada");
+
+    if (agendaOk) {
+      await supabase.from("orders").update({ r_agendapro: true, updated_at: new Date().toISOString() }).eq("id", pedido.id);
+
+      if (fueSoloEncolado) {
+        console.log(`⏳ Pedido ${resolvedOrderId} encolado en AgendaPro`);
+      } else {
+        await supabase.from("orders").update({ estado_pago: "sincronizado", updated_at: new Date().toISOString() }).eq("id", pedido.id);
+        console.log(`✅ Pedido ${resolvedOrderId} sincronizado con AgendaPro`);
+      }
+    } else {
+      throw new Error(agendaData?.mensaje || "Respuesta no válida de AgendaPro");
+    }
+  } catch (agendaErr) {
+    console.error("❌ Error llamando AgendaPro:", agendaErr.message);
+    await supabase.from("orders").update({ agendapro_error: agendaErr.message, updated_at: new Date().toISOString() }).eq("id", pedido.id);
+  }
+}
+
+// ─── Worker: reprocesar webhooks encolados (red de seguridad) ─────────────────
+async function processPendingWebhooks() {
+  try {
+    const { data: pending } = await supabase
+      .from("pending_webhooks")
+      .select("*")
+      .lte("next_retry_at", new Date().toISOString())
+      .lt("intentos", 10)
+      .order("created_at", { ascending: true })
+      .limit(5);
+
+    if (!pending?.length) return;
+
+    for (const row of pending) {
+      const { payment_id, order_id } = extractBoldIds(row.payload);
+      const pedido = await findOrder({ order_id, payment_id });
+
+      if (!pedido) {
+        const delay = Math.min(30_000 * Math.pow(2, row.intentos), 30 * 60_000);
+        await supabase.from("pending_webhooks").update({
+          intentos: row.intentos + 1,
+          ultimo_error: `Intento ${row.intentos + 1}: pedido aún no existe`,
+          next_retry_at: new Date(Date.now() + delay).toISOString(),
+        }).eq("id", row.id);
+        console.warn(`⏳ Reintento ${row.intentos + 1} fallido para ${order_id}, próximo en ${delay / 1000}s`);
+        continue;
+      }
+
+      console.log(`🔄 Reprocesando webhook encolado: ${order_id}`);
+      try {
+        await processApprovedSale(pedido, payment_id);
+        await supabase.from("pending_webhooks").delete().eq("id", row.id);
+        console.log(`✅ Webhook encolado procesado y eliminado: ${order_id}`);
+      } catch (err) {
+        const delay = Math.min(30_000 * Math.pow(2, row.intentos), 30 * 60_000);
+        await supabase.from("pending_webhooks").update({
+          intentos: row.intentos + 1,
+          ultimo_error: err.message,
+          next_retry_at: new Date(Date.now() + delay).toISOString(),
+        }).eq("id", row.id);
+      }
+    }
+  } catch (err) {
+    console.error("❌ Error en worker pending_webhooks:", err.message);
+  }
+}
+
+// Corre cada 30 segundos como red de seguridad
+setInterval(processPendingWebhooks, 30_000);
+
+// ─── GET /webhook — verificación de Bold ─────────────────────────────────────
 app.get("/webhook", (_req, res) => {
   res.status(200).send("OK");
 });
 
 // ─── Webhook de Bold ──────────────────────────────────────────────────────────
-// FIX 2: type: "*/*" para aceptar cualquier Content-Type que Bold envíe
 app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
-  // FIX 3: Responder 200 inmediatamente para evitar timeouts de Bold
+  // Responder 200 inmediatamente para evitar timeouts de Bold
   res.status(200).send("OK");
 
   try {
-    // FIX 4: Verificar que req.body es un Buffer válido
     if (!req.body || !Buffer.isBuffer(req.body)) {
       console.error("❌ req.body vacío o inválido, tipo:", typeof req.body);
       return;
@@ -204,6 +394,7 @@ app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     console.log("📬 Webhook recibido:", payload.type);
     console.log("🧾 Payload Bold:", JSON.stringify(payload, null, 2));
 
+    // ── SALE_APPROVED ────────────────────────────────────────────────────────
     if (payload.type === "SALE_APPROVED") {
       const { payment_id, order_id } = extractBoldIds(payload);
 
@@ -214,139 +405,25 @@ app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
       console.log("🔍 order_id:", order_id, "| payment_id:", payment_id);
 
-      const pedido = await findOrder({ order_id, payment_id });
+      // Retry rápido: espera hasta 60s a que /create-order guarde la orden
+      const pedido = await findOrderWithRetry({ order_id, payment_id }, 60_000);
 
       if (!pedido) {
-        console.error("❌ Pedido no encontrado:", {
-          order_id,
-          payment_id,
-          boldReference: payload?.data?.metadata?.reference ?? null,
+        // Último recurso: encolar para el worker
+        console.error("❌ Pedido no encontrado tras 60s, encolando:", { order_id, payment_id });
+        await supabase.from("pending_webhooks").insert({
+          payload,
+          intentos: 0,
+          ultimo_error: "Pedido no encontrado tras 60s de reintentos",
+          next_retry_at: new Date(Date.now() + 30_000).toISOString(),
         });
         return;
       }
 
-      const resolvedOrderId = pedido.bold_order_id;
-
-      if (pedido.estado_pago === "pagado" || pedido.estado_pago === "sincronizado") {
-        console.log(`⏭️ Pedido ${resolvedOrderId} ya procesado, se omite`);
-        return;
-      }
-
-      const updatePayload = {
-        estado_pago: "pagado",
-        pagado_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      if (payment_id && !pedido.bold_transaction_id) {
-        updatePayload.bold_transaction_id = payment_id;
-      }
-
-      const { error: updateError } = await supabase
-        .from("orders")
-        .update(updatePayload)
-        .eq("id", pedido.id);
-
-      if (updateError) {
-        console.error("❌ Error actualizando orden:", updateError.message);
-        return;
-      }
-
-      console.log(`✅ Orden ${resolvedOrderId} marcada como pagada. TX: ${payment_id}`);
-
-      try {
-        const emailFrom = process.env.EMAIL_FROM;
-        const adminEmail = process.env.ADMIN_EMAIL;
-        const correosAEnviar = [];
-
-        if (pedido.email) {
-          correosAEnviar.push(
-            resend.emails.send({
-              from: `Emarizos <${emailFrom}>`,
-              to: pedido.email,
-              subject: `Confirmacion de tu pedido en Emarizos - ${resolvedOrderId}`,
-              html: buildClienteHTML(pedido, resolvedOrderId),
-            }).then(({ data, error }) => {
-              if (error) console.error("❌ Error correo cliente:", error);
-              else console.log(`✅ Correo cliente enviado a ${pedido.email} (ID: ${data?.id})`);
-            })
-          );
-        } else {
-          console.log(`⚠️ Orden ${resolvedOrderId} sin email de cliente.`);
-        }
-
-        if (adminEmail) {
-          correosAEnviar.push(
-            resend.emails.send({
-              from: `Sistema Emarizos <${emailFrom}>`,
-              to: adminEmail,
-              subject: `Nuevo pedido pagado - ${resolvedOrderId}`,
-              html: buildAdminHTML(pedido, resolvedOrderId, payment_id),
-            }).then(({ data, error }) => {
-              if (error) console.error("❌ Error correo admin:", error);
-              else console.log(`✅ Correo admin enviado a ${adminEmail} (ID: ${data?.id})`);
-            })
-          );
-        }
-
-        await Promise.all(correosAEnviar);
-      } catch (emailErr) {
-        console.error("❌ Error enviando correos:", emailErr.message);
-      }
-
-      try {
-        const productos = (pedido.items || []).map(item => ({
-          nombre: item.nombre ?? item.name,
-          cantidad: item.cantidad ?? item.quantity,
-        }));
-
-        const agendaRes = await fetch(`${process.env.AGENDAPRO_BOT_URL}/venta`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": process.env.AGENDAPRO_BOT_API_KEY,
-          },
-          body: JSON.stringify({
-            order_id: resolvedOrderId,
-            payment_id,
-            productos,
-            cliente: {
-              nombre_completo: pedido.nombre_completo,
-              email: pedido.email,
-              telefono: pedido.telefono,
-            },
-          }),
-        });
-
-        let agendaData = null;
-        try { agendaData = await agendaRes.json(); } catch { agendaData = null; }
-
-        if (!agendaRes.ok) throw new Error(`AgendaPro HTTP ${agendaRes.status}`);
-
-        console.log("✅ Respuesta AgendaPro:", agendaData);
-
-        const agendaOk = agendaData?.ok === true;
-        const agendaMensaje = String(agendaData?.mensaje || "").toLowerCase();
-        const fueSoloEncolado = agendaMensaje.includes("encolada");
-
-        if (agendaOk) {
-          await supabase.from("orders").update({ r_agendapro: true, updated_at: new Date().toISOString() }).eq("id", pedido.id);
-
-          if (fueSoloEncolado) {
-            console.log(`⏳ Pedido ${resolvedOrderId} encolado en AgendaPro`);
-          } else {
-            await supabase.from("orders").update({ estado_pago: "sincronizado", updated_at: new Date().toISOString() }).eq("id", pedido.id);
-            console.log(`✅ Pedido ${resolvedOrderId} sincronizado con AgendaPro`);
-          }
-        } else {
-          throw new Error(agendaData?.mensaje || "Respuesta no válida de AgendaPro");
-        }
-      } catch (agendaErr) {
-        console.error("❌ Error llamando AgendaPro:", agendaErr.message);
-        await supabase.from("orders").update({ agendapro_error: agendaErr.message, updated_at: new Date().toISOString() }).eq("id", pedido.id);
-      }
+      await processApprovedSale(pedido, payment_id);
     }
 
+    // ── SALE_REJECTED ────────────────────────────────────────────────────────
     if (payload.type === "SALE_REJECTED") {
       const { order_id } = extractBoldIds(payload);
 
