@@ -84,8 +84,8 @@ async function findOrder({ order_id, payment_id }) {
   return null;
 }
 
-// ─── Retry rápido: busca la orden cada 3s por hasta 60s ──────────────────────
-async function findOrderWithRetry({ order_id, payment_id }, maxWaitMs = 60_000) {
+// ─── Retry rápido: busca la orden cada 3s por hasta 15s ──────────────────────
+async function findOrderWithRetry({ order_id, payment_id }, maxWaitMs = 15_000) {
   const interval = 3_000;
   const start = Date.now();
 
@@ -200,11 +200,6 @@ function buildAdminHTML(pedido, order_id, payment_id) {
 async function processApprovedSale(pedido, payment_id) {
   const resolvedOrderId = pedido.bold_order_id;
 
-  if (pedido.estado_pago === "pagado" || pedido.estado_pago === "sincronizado") {
-    console.log(`⏭️ Pedido ${resolvedOrderId} ya procesado, se omite`);
-    return;
-  }
-
   const updatePayload = {
     estado_pago: "pagado",
     pagado_at: new Date().toISOString(),
@@ -215,13 +210,22 @@ async function processApprovedSale(pedido, payment_id) {
     updatePayload.bold_transaction_id = payment_id;
   }
 
-  const { error: updateError } = await supabase
+  // Check y update atómico en la misma consulta para evitar Race Conditions
+  const { data: updated, error: updateError } = await supabase
     .from("orders")
     .update(updatePayload)
-    .eq("id", pedido.id);
+    .eq("id", pedido.id)
+    .in("estado_pago", ["pendiente", "error"]) // Solo actualiza si NO está pagado aún
+    .select()
+    .maybeSingle();
 
   if (updateError) {
     console.error("❌ Error actualizando orden:", updateError.message);
+    return;
+  }
+
+  if (!updated) {
+    console.log(`⏭️ Pedido ${resolvedOrderId} ya fue procesado por otro request. Se omite.`);
     return;
   }
 
@@ -369,8 +373,12 @@ async function processPendingWebhooks() {
   }
 }
 
-// Corre cada 30 segundos como red de seguridad
-setInterval(processPendingWebhooks, 30_000);
+// ─── Worker recursivo (Red de seguridad sin solapamiento) ───────────────────
+async function scheduleWorker() {
+  await processPendingWebhooks();
+  setTimeout(scheduleWorker, 30_000); // Solo agenda el siguiente cuando termina el actual
+}
+scheduleWorker();
 
 // ─── GET /webhook — verificación de Bold ─────────────────────────────────────
 app.get("/webhook", (_req, res) => {
@@ -384,14 +392,32 @@ app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
   try {
     if (!req.body || !Buffer.isBuffer(req.body)) {
-      console.error("❌ req.body vacío o inválido, tipo:", typeof req.body);
+      console.error("❌ req.body vacío o inválido");
       return;
     }
 
     const rawBody = req.body.toString("utf-8");
+    const signature = req.headers["x-bold-signature"] || req.headers["bold-signature"];
+
+    // Validación de firma de Bold
+    if (!signature) {
+      console.warn("⚠️ Webhook ignorado: Falta el header de firma.");
+      return;
+    }
+
+    const expected = crypto
+      .createHmac("sha256", process.env.BOLD_SECRET_KEY)
+      .update(rawBody)
+      .digest("hex");
+
+    if (signature !== expected) {
+      console.warn("⚠️ Webhook ignorado: Firma inválida.");
+      return;
+    }
+
     const payload = JSON.parse(rawBody);
 
-    console.log("📬 Webhook recibido:", payload.type);
+    console.log("📬 Webhook recibido y validado:", payload.type);
     console.log("🧾 Payload Bold:", JSON.stringify(payload, null, 2));
 
     // ── SALE_APPROVED ────────────────────────────────────────────────────────
@@ -405,16 +431,16 @@ app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
       console.log("🔍 order_id:", order_id, "| payment_id:", payment_id);
 
-      // Retry rápido: espera hasta 60s a que /create-order guarde la orden
-      const pedido = await findOrderWithRetry({ order_id, payment_id }, 60_000);
+      // Retry rápido: espera hasta 15s a que /create-order guarde la orden
+      const pedido = await findOrderWithRetry({ order_id, payment_id }, 15_000);
 
       if (!pedido) {
-        // Último recurso: encolar para el worker
-        console.error("❌ Pedido no encontrado tras 60s, encolando:", { order_id, payment_id });
+        // Último recurso: encolar para el worker recursivo
+        console.error("❌ Pedido no encontrado tras 15s, encolando:", { order_id, payment_id });
         await supabase.from("pending_webhooks").insert({
           payload,
           intentos: 0,
-          ultimo_error: "Pedido no encontrado tras 60s de reintentos",
+          ultimo_error: "Pedido no encontrado tras 15s de reintentos",
           next_retry_at: new Date(Date.now() + 30_000).toISOString(),
         });
         return;
