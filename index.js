@@ -405,9 +405,12 @@ app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       return;
     }
 
+    // 🔥 CAMBIO APLICADO: Convertir a Base64 antes de firmar
+    const encodedBody = Buffer.from(rawBody, "utf-8").toString("base64");
+
     const expected = crypto
       .createHmac("sha256", process.env.BOLD_SECRET_KEY)
-      .update(rawBody)
+      .update(encodedBody) // 🔥 Se usa encodedBody en lugar de rawBody
       .digest("hex");
 
     if (signature !== expected) {
