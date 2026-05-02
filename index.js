@@ -21,6 +21,7 @@ const PORT = process.env.PORT || 3001;
 
 // ─── Validar env ──────────────────────────────────────────────────────────────
 if (!process.env.BOLD_SECRET_KEY) console.error("❌ Falta BOLD_SECRET_KEY");
+if (!process.env.BOLD_API_KEY) console.error("❌ Falta BOLD_API_KEY (Necesaria para polling)");
 if (!process.env.SUPABASE_URL) console.error("❌ Falta SUPABASE_URL");
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) console.error("❌ Falta SUPABASE_SERVICE_ROLE_KEY");
 if (!process.env.AGENDAPRO_BOT_URL) console.error("❌ Falta AGENDAPRO_BOT_URL");
@@ -84,7 +85,6 @@ async function findOrder({ order_id, payment_id }) {
   return null;
 }
 
-// ─── Retry rápido: busca la orden cada 3s por hasta 15s ──────────────────────
 async function findOrderWithRetry({ order_id, payment_id }, maxWaitMs = 15_000) {
   const interval = 3_000;
   const start = Date.now();
@@ -107,8 +107,6 @@ function buildClienteHTML(pedido, order_id) {
     const nombre = item.nombre ?? item.name;
     const cantidad = item.cantidad ?? item.quantity;
     const precio = (item.price ?? item.precio ?? 0) * cantidad;
-    
-    // 🔥 Extraer el ID para la imagen (fallback al logo si no existe)
     const idProducto = item.id ?? item.product_id ?? "";
     const imgUrl = idProducto ? `https://emarizos.co/img/products/${idProducto}.png` : "https://emarizos.co/img/favicon.png";
 
@@ -267,7 +265,7 @@ function buildAdminHTML(pedido, order_id, payment_id) {
       <td align="center" style="padding:40px 16px;">
         <table class="card" role="presentation" cellpadding="0" cellspacing="0" width="600" bgcolor="#ffffff" style="border-collapse:collapse;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.06);max-width:600px;width:100%;">
           
-          <!-- Header (Admin con color marron dominante) -->
+          <!-- Header -->
           <tr>
             <td align="center" bgcolor="rgb(97, 24, 11)" style="background:rgb(97, 24, 11);padding:40px 24px 32px;text-align:center;">
               <img src="https://emarizos.co/img/favicon.png" alt="Emarizos" width="120" style="display:block;margin:0 auto 16px;border:0;filter:brightness(0) invert(1);">
@@ -349,7 +347,7 @@ function buildAdminHTML(pedido, order_id, payment_id) {
 }
 
 // ─── Lógica principal de venta aprobada (reutilizable) ───────────────────────
-async function processApprovedSale(pedido, payment_id) {
+async function processApprovedSale(pedido, payment_id, source = "Webhook") {
   const resolvedOrderId = pedido.bold_order_id;
 
   const updatePayload = {
@@ -367,7 +365,7 @@ async function processApprovedSale(pedido, payment_id) {
     .from("orders")
     .update(updatePayload)
     .eq("id", pedido.id)
-    .in("estado_pago", ["pendiente", "error"]) // Solo actualiza si NO está pagado aún
+    .in("estado_pago", ["pendiente", "error"]) 
     .select()
     .maybeSingle();
 
@@ -377,11 +375,16 @@ async function processApprovedSale(pedido, payment_id) {
   }
 
   if (!updated) {
-    console.log(`⏭️ Pedido ${resolvedOrderId} ya fue procesado por otro request. Se omite.`);
+    console.log(`⏭️ [${source}] Pedido ${resolvedOrderId} ya fue procesado por otro request. Se omite.`);
     return;
   }
 
-  console.log(`✅ Orden ${resolvedOrderId} marcada como pagada. TX: ${payment_id}`);
+  // Calcular métrica de tiempo de llegada
+  const demoraMs = Date.now() - new Date(pedido.created_at).getTime();
+  const demoraMinutos = (demoraMs / 1000 / 60).toFixed(1);
+  console.log(`⏱️ MÉTRICA: La confirmación vía ${source} tardó ${demoraMinutos} minutos.`);
+
+  console.log(`✅ Orden ${resolvedOrderId} marcada como pagada vía ${source}. TX: ${payment_id}`);
 
   // ── Correos ────────────────────────────────────────────────────────────────
   try {
@@ -401,8 +404,6 @@ async function processApprovedSale(pedido, payment_id) {
           else console.log(`✅ Correo cliente enviado a ${pedido.email} (ID: ${data?.id})`);
         })
       );
-    } else {
-      console.log(`⚠️ Orden ${resolvedOrderId} sin email de cliente.`);
     }
 
     if (adminEmail) {
@@ -478,7 +479,54 @@ async function processApprovedSale(pedido, payment_id) {
   }
 }
 
-// ─── Worker: reprocesar webhooks encolados (red de seguridad) ─────────────────
+// ─── POLLING ACTIVO: Consulta a la API de Bold ────────────────────────────────
+async function checkPendingOrders() {
+  if (!process.env.BOLD_API_KEY) return; // Evitar que rompa si no configuras el API Key
+  
+  try {
+    // Buscar órdenes pendientes de la última hora
+    const haceUnaHora = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    
+    const { data: ordenesPendientes, error } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("estado_pago", "pendiente")
+      .gt("created_at", haceUnaHora);
+
+    if (error || !ordenesPendientes || ordenesPendientes.length === 0) return;
+
+    for (const pedido of ordenesPendientes) {
+      const orderId = pedido.bold_order_id;
+      
+      try {
+        const res = await fetch(`https://payments.api.bold.co/v2/payment-voucher/${orderId}?is_external_reference=true`, {
+          method: "GET",
+          headers: {
+            "Authorization": `x-api-key ${process.env.BOLD_API_KEY}` 
+          }
+        });
+
+        if (!res.ok) continue; // Puede ser 404 si el usuario nunca pagó o abandonó la página
+
+        const boldData = await res.json();
+        
+        if (boldData.payment_status === "APPROVED") {
+          console.log(`[POLLING] ¡Orden ${orderId} aprobada identificada por API directa!`);
+          await processApprovedSale(pedido, boldData.transaction_id, "Polling API");
+        } else if (boldData.payment_status === "REJECTED" || boldData.payment_status === "FAILED") {
+          console.log(`[POLLING] Orden ${orderId} rechazada. Cancelando...`);
+          await supabase.from("orders").update({ estado_pago: "error" }).eq("id", pedido.id);
+        }
+      } catch (err) {
+        console.error(`❌ Error consultando API para ${orderId}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error("❌ Error general en cron job de polling:", err.message);
+  }
+}
+
+// ─── Worker recursivo de seguridad ─────────────────────────────────────────────
 async function processPendingWebhooks() {
   try {
     const { data: pending } = await supabase
@@ -508,7 +556,7 @@ async function processPendingWebhooks() {
 
       console.log(`🔄 Reprocesando webhook encolado: ${order_id}`);
       try {
-        await processApprovedSale(pedido, payment_id);
+        await processApprovedSale(pedido, payment_id, "Worker");
         await supabase.from("pending_webhooks").delete().eq("id", row.id);
         console.log(`✅ Webhook encolado procesado y eliminado: ${order_id}`);
       } catch (err) {
@@ -525,10 +573,10 @@ async function processPendingWebhooks() {
   }
 }
 
-// ─── Worker recursivo (Red de seguridad sin solapamiento) ───────────────────
 async function scheduleWorker() {
   await processPendingWebhooks();
-  setTimeout(scheduleWorker, 30_000); // Solo agenda el siguiente cuando termina el actual
+  await checkPendingOrders(); // 🔥 Ejecuta el polling junto al ciclo de mantenimiento
+  setTimeout(scheduleWorker, 60_000); // 1 minuto entre ejecuciones
 }
 scheduleWorker();
 
@@ -539,7 +587,7 @@ app.get("/webhook", (_req, res) => {
 
 // ─── Webhook de Bold ──────────────────────────────────────────────────────────
 app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
-  // Responder 200 inmediatamente para evitar timeouts de Bold
+  // Responder 200 inmediatamente
   res.status(200).send("OK");
 
   try {
@@ -551,18 +599,15 @@ app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     const rawBody = req.body.toString("utf-8");
     const signature = req.headers["x-bold-signature"] || req.headers["bold-signature"];
 
-    // Validación de firma de Bold
     if (!signature) {
       console.warn("⚠️ Webhook ignorado: Falta el header de firma.");
       return;
     }
 
-    // 🔥 CAMBIO APLICADO: Convertir a Base64 antes de firmar
     const encodedBody = Buffer.from(rawBody, "utf-8").toString("base64");
-
     const expected = crypto
       .createHmac("sha256", process.env.BOLD_SECRET_KEY)
-      .update(encodedBody) // 🔥 Se usa encodedBody en lugar de rawBody
+      .update(encodedBody)
       .digest("hex");
 
     if (signature !== expected) {
@@ -573,25 +618,16 @@ app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     const payload = JSON.parse(rawBody);
 
     console.log("📬 Webhook recibido y validado:", payload.type);
-    console.log("🧾 Payload Bold:", JSON.stringify(payload, null, 2));
 
     // ── SALE_APPROVED ────────────────────────────────────────────────────────
     if (payload.type === "SALE_APPROVED") {
       const { payment_id, order_id } = extractBoldIds(payload);
 
-      if (!order_id || !String(order_id).startsWith("ORDER_")) {
-        console.log(`🔌 Ignorando compra de Datáfono/Externa. TX: ${payment_id || "N/A"} - Ref: ${order_id || "N/A"}`);
-        return;
-      }
+      if (!order_id || !String(order_id).startsWith("ORDER_")) return;
 
-      console.log("🔍 order_id:", order_id, "| payment_id:", payment_id);
-
-      // Retry rápido: espera hasta 15s a que /create-order guarde la orden
       const pedido = await findOrderWithRetry({ order_id, payment_id }, 15_000);
 
       if (!pedido) {
-        // Último recurso: encolar para el worker recursivo
-        console.error("❌ Pedido no encontrado tras 15s, encolando:", { order_id, payment_id });
         await supabase.from("pending_webhooks").insert({
           payload,
           intentos: 0,
@@ -601,29 +637,19 @@ app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
         return;
       }
 
-      await processApprovedSale(pedido, payment_id);
+      await processApprovedSale(pedido, payment_id, "Webhook");
     }
 
     // ── SALE_REJECTED ────────────────────────────────────────────────────────
     if (payload.type === "SALE_REJECTED") {
       const { order_id } = extractBoldIds(payload);
+      if (!order_id || !String(order_id).startsWith("ORDER_")) return;
 
-      if (!order_id || !String(order_id).startsWith("ORDER_")) {
-        console.log(`🔌 Ignorando rechazo de Datáfono/Externa. Ref: ${order_id || "N/A"}`);
-        return;
-      }
-
-      console.log("🔍 order_id rechazado:", order_id);
-
-      const { error } = await supabase
+      await supabase
         .from("orders")
         .update({ estado_pago: "error", updated_at: new Date().toISOString() })
         .eq("bold_order_id", order_id);
-
-      if (error) console.error("❌ Error actualizando orden rechazada:", error.message);
-      else console.log(`❌ Orden ${order_id} marcada como error.`);
     }
-
   } catch (err) {
     console.error("❌ Error en webhook:", err.message);
   }
@@ -670,11 +696,7 @@ app.post("/create-order", async (req, res) => {
       r_agendapro: false,
     });
 
-    if (dbError) {
-      console.error("❌ Error guardando orden:", dbError.message);
-      return res.status(500).json({ error: "No se pudo guardar la orden" });
-    }
-
+    if (dbError) return res.status(500).json({ error: "No se pudo guardar la orden" });
     console.log("💾 Orden guardada:", orderId);
 
     return res.json({
@@ -686,7 +708,6 @@ app.post("/create-order", async (req, res) => {
       reference: orderId,
     });
   } catch (error) {
-    console.error("❌ Error creando orden:", error.message);
     return res.status(500).json({ error: "Error creando orden" });
   }
 });
@@ -702,16 +723,10 @@ app.get("/order-status/:orderId", async (req, res) => {
       .eq("bold_order_id", orderId)
       .maybeSingle();
 
-    if (error) {
-      console.error("❌ Error consultando orden:", error.message);
-      return res.status(500).json({ error: "Error consultando orden" });
-    }
-
-    if (!data) return res.status(404).json({ error: "Orden no encontrada" });
+    if (error || !data) return res.status(404).json({ error: "Orden no encontrada" });
 
     return res.json(data);
   } catch (err) {
-    console.error("❌ Error en order-status:", err.message);
     return res.status(500).json({ error: "Error interno" });
   }
 });
@@ -721,7 +736,6 @@ app.get("/", (_req, res) => {
   res.send("🚀 Servidor Emarizos corriendo");
 });
 
-// ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
 });
