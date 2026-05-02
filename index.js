@@ -102,98 +102,250 @@ async function findOrderWithRetry({ order_id, payment_id }, maxWaitMs = 15_000) 
 
 // ─── Correos ──────────────────────────────────────────────────────────────────
 function buildClienteHTML(pedido, order_id) {
-  const fecha = formatFecha(pedido.created_at);
+  const fecha = formatFecha(pedido.created_at || new Date().toISOString());
   const itemsHTML = (pedido.items || []).map(item => {
     const nombre = item.nombre ?? item.name;
     const cantidad = item.cantidad ?? item.quantity;
     const precio = (item.price ?? item.precio ?? 0) * cantidad;
+    
+    // 🔥 Extraer el ID para la imagen (fallback al logo si no existe)
+    const idProducto = item.id ?? item.product_id ?? "";
+    const imgUrl = idProducto ? `https://emarizos.co/img/products/${idProducto}.png` : "https://emarizos.co/img/favicon.png";
+
     return `
-      <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;">${nombre}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center;">${cantidad}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;">&#36;${formatCOP(precio)}</td>
+      <tr style="background:#ffffff;">
+        <td style="padding:12px 10px;border-bottom:1px solid #f0e0dc;">
+          <img src="${imgUrl}" width="48" height="48" style="display:block;border-radius:8px;border:1px solid #f0e0dc;background:#ffffff;object-fit:cover;" alt="">
+        </td>
+        <td style="padding:12px 10px;border-bottom:1px solid #f0e0dc;font-size:14px;color:#333;font-family:Segoe UI,Helvetica,Arial,sans-serif;">${nombre}</td>
+        <td align="center" style="padding:12px 10px;border-bottom:1px solid #f0e0dc;font-size:14px;color:#333;font-family:Segoe UI,Helvetica,Arial,sans-serif;">${cantidad}</td>
+        <td align="right" style="padding:12px 10px;border-bottom:1px solid #f0e0dc;font-size:14px;color:rgb(97, 24, 11);font-weight:600;font-family:Segoe UI,Helvetica,Arial,sans-serif;">&#36;${formatCOP(precio)}</td>
       </tr>`;
   }).join("");
 
   return `
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#333;">
-      <div style="background:#e91e8c;padding:24px;text-align:center;">
-        <h1 style="color:#fff;margin:0;font-size:22px;">Gracias por tu compra!</h1>
-        <p style="color:#fff;margin:8px 0 0;font-size:14px;">${fecha}</p>
-      </div>
-      <div style="padding:24px;">
-        <p>Hola <strong>${pedido.nombre_completo}</strong>,</p>
-        <p>Hemos recibido tu pago correctamente. Aqui estan los detalles de tu pedido:</p>
-        <table style="width:100%;border-collapse:collapse;margin:16px 0;">
-          <thead><tr style="background:#f5f5f5;">
-            <th style="padding:8px 12px;text-align:left;">Producto</th>
-            <th style="padding:8px 12px;text-align:center;">Cant.</th>
-            <th style="padding:8px 12px;text-align:right;">Subtotal</th>
-          </tr></thead>
-          <tbody>${itemsHTML}</tbody>
+  <!DOCTYPE html>
+  <html lang="es">
+  <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Confirmacion de pedido</title>
+  <style>
+  @media (prefers-color-scheme: dark) {
+    body, table, td { background-color: #fafafa !important; }
+    .card { background-color: #ffffff !important; }
+    h1, p, td, th, strong { color: #333333 !important; }
+  }
+  </style>
+  </head>
+  <body style="margin:0;padding:0;background-color:#fafafa;" bgcolor="#fafafa">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
+    <tr>
+      <td align="center" style="padding:40px 16px;">
+        <table class="card" role="presentation" cellpadding="0" cellspacing="0" width="600" bgcolor="#ffffff" style="border-collapse:collapse;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.06);max-width:600px;width:100%;">
+          
+          <!-- Header -->
+          <tr>
+            <td align="center" bgcolor="#efd3d0" style="background:#efd3d0;padding:40px 24px 32px;text-align:center;">
+              <img src="https://emarizos.co/img/favicon.png" alt="Emarizos" width="120" style="display:block;margin:0 auto 16px;border:0;">
+              <h1 style="color:rgb(97, 24, 11);font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:24px;font-weight:600;margin:0;letter-spacing:0.3px;">Gracias por tu compra</h1>
+              <p style="color:rgb(97, 24, 11);font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:14px;margin:10px 0 0;">${fecha}</p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 32px 28px;font-family:Segoe UI,Helvetica,Arial,sans-serif;color:#333;">
+              <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">Hola <strong style="color:rgb(97, 24, 11);">${pedido.nombre_completo}</strong>,</p>
+              <p style="margin:0 0 28px;font-size:15px;line-height:1.6;color:#555;">Hemos recibido tu pago correctamente y tu pedido esta siendo preparado.</p>
+
+              <!-- Tabla de productos -->
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-bottom:28px;border-radius:8px;overflow:hidden;border:1px solid #e8d5d1;">
+                <thead>
+                  <tr>
+                    <th width="60" style="padding:14px 10px;background:rgb(97, 24, 11);font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:#ffffff;font-weight:600;font-family:Segoe UI,Helvetica,Arial,sans-serif;">&nbsp;</th>
+                    <th align="left" width="auto" style="padding:14px 10px;background:rgb(97, 24, 11);font-size:12px;text-transform:uppercase;letter-spacing:0.6px;color:#ffffff;font-weight:600;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Producto</th>
+                    <th align="center" width="60" style="padding:14px 10px;background:rgb(97, 24, 11);font-size:12px;text-transform:uppercase;letter-spacing:0.6px;color:#ffffff;font-weight:600;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Cant.</th>
+                    <th align="right" width="100" style="padding:14px 10px;background:rgb(97, 24, 11);font-size:12px;text-transform:uppercase;letter-spacing:0.6px;color:#ffffff;font-weight:600;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${itemsHTML}
+                </tbody>
+              </table>
+
+              <!-- Totales -->
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-bottom:28px;">
+                <tr>
+                  <td align="right" style="padding:0;">
+                    <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:280px;">
+                      <tr>
+                        <td align="right" style="padding:8px 0;font-size:14px;color:#666;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Subtotal:</td>
+                        <td align="right" width="110" style="padding:8px 0;font-size:14px;color:#333;font-weight:500;font-family:Segoe UI,Helvetica,Arial,sans-serif;">&#36;${formatCOP(pedido.subtotal)}</td>
+                      </tr>
+                      <tr>
+                        <td align="right" style="padding:8px 0;font-size:14px;color:#666;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Envio:</td>
+                        <td align="right" style="padding:8px 0;font-size:14px;color:#333;font-weight:500;font-family:Segoe UI,Helvetica,Arial,sans-serif;">&#36;${formatCOP(pedido.envio ?? 0)}</td>
+                      </tr>
+                      <tr>
+                        <td align="right" style="padding:12px 0 8px;font-size:16px;color:rgb(97, 24, 11);font-weight:700;border-top:2px solid #efd3d0;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Total:</td>
+                        <td align="right" style="padding:12px 0 8px;font-size:16px;color:rgb(97, 24, 11);font-weight:700;border-top:2px solid #efd3d0;font-family:Segoe UI,Helvetica,Arial,sans-serif;">&#36;${formatCOP(pedido.total)} COP</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              ${pedido.direccion ? `
+              <!-- Direccion -->
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background:#fdf5f3;border-radius:8px;border:1px solid #efd3d0;">
+                <tr>
+                  <td style="padding:18px 20px;">
+                    <p style="margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:0.5px;color:rgb(97, 24, 11);font-weight:600;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Direccion de envio</p>
+                    <p style="margin:0;font-size:14px;color:#444;line-height:1.5;font-family:Segoe UI,Helvetica,Arial,sans-serif;">${pedido.direccion}${pedido.barrio ? `, ${pedido.barrio}` : ""}</p>
+                  </td>
+                </tr>
+              </table>` : ""}
+
+              <p style="margin:20px 0 0;font-size:12px;color:#999;font-family:Segoe UI,Helvetica,Arial,sans-serif;">No. de orden: <span style="color:#666;font-family:Consolas,monospace;">${order_id}</span></p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="background:#f8f9fa;padding:20px;text-align:center;font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:12px;color:#aaa;border-top:1px solid #eee;">
+              <p style="margin:0 0 6px;">&copy; ${new Date().getFullYear()} Emarizos. Todos los derechos reservados.</p>
+              <p style="margin:0;font-size:11px;">Barranquilla, Colombia</p>
+            </td>
+          </tr>
         </table>
-        <table style="width:100%;margin-top:8px;">
-          <tr><td style="padding:4px 12px;">Subtotal</td><td style="padding:4px 12px;text-align:right;">&#36;${formatCOP(pedido.subtotal)}</td></tr>
-          <tr><td style="padding:4px 12px;">Envio</td><td style="padding:4px 12px;text-align:right;">&#36;${formatCOP(pedido.envio ?? 0)}</td></tr>
-          <tr style="font-weight:bold;font-size:16px;"><td style="padding:8px 12px;">Total pagado</td><td style="padding:8px 12px;text-align:right;">&#36;${formatCOP(pedido.total)} COP</td></tr>
-        </table>
-        ${pedido.direccion ? `<p style="margin-top:16px;"><strong>Direccion de entrega:</strong><br/>${pedido.direccion}${pedido.barrio ? `, ${pedido.barrio}` : ""}</p>` : ""}
-        <p style="margin-top:16px;font-size:13px;color:#666;">No. de orden: <code>${order_id}</code></p>
-        <p>Si tienes alguna pregunta, responde a este correo. Nos vemos pronto!</p>
-      </div>
-      <div style="background:#f5f5f5;padding:16px;text-align:center;font-size:12px;color:#999;">
-        &copy; ${new Date().getFullYear()} Emarizos &middot; Todos los derechos reservados
-      </div>
-    </div>`;
+      </td>
+    </tr>
+  </table>
+  </body>
+  </html>`;
 }
 
 function buildAdminHTML(pedido, order_id, payment_id) {
-  const fecha = formatFecha(pedido.created_at);
+  const fecha = formatFecha(pedido.created_at || new Date().toISOString());
   const itemsHTML = (pedido.items || []).map(item => {
     const nombre = item.nombre ?? item.name;
     const cantidad = item.cantidad ?? item.quantity;
     const precio = (item.price ?? item.precio ?? 0) * cantidad;
+    const idProducto = item.id ?? item.product_id ?? "";
+    const imgUrl = idProducto ? `https://emarizos.co/img/products/${idProducto}.png` : "https://emarizos.co/img/favicon.png";
+
     return `
-      <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;">${nombre}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center;">${cantidad}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;">&#36;${formatCOP(precio)}</td>
+      <tr style="background:#ffffff;">
+        <td style="padding:12px 10px;border-bottom:1px solid #f0e0dc;">
+          <img src="${imgUrl}" width="48" height="48" style="display:block;border-radius:8px;border:1px solid #f0e0dc;background:#ffffff;object-fit:cover;" alt="">
+        </td>
+        <td style="padding:12px 10px;border-bottom:1px solid #f0e0dc;font-size:14px;color:#333;font-family:Segoe UI,Helvetica,Arial,sans-serif;">${nombre}</td>
+        <td align="center" style="padding:12px 10px;border-bottom:1px solid #f0e0dc;font-size:14px;color:#333;font-family:Segoe UI,Helvetica,Arial,sans-serif;">${cantidad}</td>
+        <td align="right" style="padding:12px 10px;border-bottom:1px solid #f0e0dc;font-size:14px;color:rgb(97, 24, 11);font-weight:600;font-family:Segoe UI,Helvetica,Arial,sans-serif;">&#36;${formatCOP(precio)}</td>
       </tr>`;
   }).join("");
 
   return `
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#333;">
-      <div style="background:#222;padding:24px;text-align:center;">
-        <h1 style="color:#fff;margin:0;font-size:22px;">Nuevo pedido pagado!</h1>
-        <p style="color:#aaa;margin:8px 0 0;font-size:14px;">${fecha}</p>
-      </div>
-      <div style="padding:24px;">
-        <p style="background:#fef08a;padding:8px 12px;border-radius:6px;font-weight:bold;color:#854d0e;display:inline-block;">ESTADO DE ENVIO: PENDIENTE</p>
-        <h3 style="margin-top:20px;">Datos del cliente</h3>
-        <table style="width:100%;border-collapse:collapse;">
-          <tr><td style="padding:4px 0;"><strong>Nombre:</strong></td><td>${pedido.nombre_completo}</td></tr>
-          <tr><td style="padding:4px 0;"><strong>Email:</strong></td><td>${pedido.email ?? "No proporcionado"}</td></tr>
-          <tr><td style="padding:4px 0;"><strong>Telefono:</strong></td><td>${pedido.telefono ?? "No proporcionado"}</td></tr>
-          <tr><td style="padding:4px 0;"><strong>Direccion:</strong></td><td>${pedido.direccion ?? ""}${pedido.barrio ? `, ${pedido.barrio}` : ""}</td></tr>
+  <!DOCTYPE html>
+  <html lang="es">
+  <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nuevo pedido</title>
+  <style>
+  @media (prefers-color-scheme: dark) {
+    body, table, td { background-color: #fafafa !important; }
+    .card { background-color: #ffffff !important; }
+    h1, p, td, th, strong { color: #333333 !important; }
+  }
+  </style>
+  </head>
+  <body style="margin:0;padding:0;background-color:#fafafa;" bgcolor="#fafafa">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
+    <tr>
+      <td align="center" style="padding:40px 16px;">
+        <table class="card" role="presentation" cellpadding="0" cellspacing="0" width="600" bgcolor="#ffffff" style="border-collapse:collapse;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.06);max-width:600px;width:100%;">
+          
+          <!-- Header (Admin con color marron dominante) -->
+          <tr>
+            <td align="center" bgcolor="rgb(97, 24, 11)" style="background:rgb(97, 24, 11);padding:40px 24px 32px;text-align:center;">
+              <img src="https://emarizos.co/img/favicon.png" alt="Emarizos" width="120" style="display:block;margin:0 auto 16px;border:0;filter:brightness(0) invert(1);">
+              <h1 style="color:#ffffff;font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:24px;font-weight:600;margin:0;letter-spacing:0.3px;">Nuevo pedido pagado!</h1>
+              <p style="color:#efd3d0;font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:14px;margin:10px 0 0;">${fecha}</p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 32px 28px;font-family:Segoe UI,Helvetica,Arial,sans-serif;color:#333;">
+              <span style="background:#fef08a;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:bold;color:#854d0e;display:inline-block;margin-bottom:20px;text-transform:uppercase;letter-spacing:0.5px;">ESTADO DE ENVIO: PENDIENTE</span>
+              
+              <h3 style="margin:0 0 12px;color:rgb(97, 24, 11);font-size:16px;">Datos del cliente</h3>
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background:#fdf5f3;border-radius:8px;border:1px solid #efd3d0;margin-bottom:28px;">
+                <tr>
+                  <td style="padding:16px;">
+                    <p style="margin:0 0 8px;font-size:14px;"><strong>Nombre:</strong> ${pedido.nombre_completo}</p>
+                    <p style="margin:0 0 8px;font-size:14px;"><strong>Email:</strong> ${pedido.email ?? "No proporcionado"}</p>
+                    <p style="margin:0 0 8px;font-size:14px;"><strong>Telefono:</strong> ${pedido.telefono ?? "No proporcionado"}</p>
+                    <p style="margin:0;font-size:14px;"><strong>Direccion:</strong> ${pedido.direccion ?? ""}${pedido.barrio ? `, ${pedido.barrio}` : ""}</p>
+                  </td>
+                </tr>
+              </table>
+
+              <h3 style="margin:0 0 12px;color:rgb(97, 24, 11);font-size:16px;">Detalle del pedido</h3>
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-bottom:28px;border-radius:8px;overflow:hidden;border:1px solid #e8d5d1;">
+                <thead>
+                  <tr>
+                    <th width="60" style="padding:14px 10px;background:rgb(97, 24, 11);font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:#ffffff;font-weight:600;font-family:Segoe UI,Helvetica,Arial,sans-serif;">&nbsp;</th>
+                    <th align="left" width="auto" style="padding:14px 10px;background:rgb(97, 24, 11);font-size:12px;text-transform:uppercase;letter-spacing:0.6px;color:#ffffff;font-weight:600;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Producto</th>
+                    <th align="center" width="60" style="padding:14px 10px;background:rgb(97, 24, 11);font-size:12px;text-transform:uppercase;letter-spacing:0.6px;color:#ffffff;font-weight:600;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Cant.</th>
+                    <th align="right" width="100" style="padding:14px 10px;background:rgb(97, 24, 11);font-size:12px;text-transform:uppercase;letter-spacing:0.6px;color:#ffffff;font-weight:600;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${itemsHTML}
+                </tbody>
+              </table>
+
+              <!-- Totales -->
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-bottom:20px;">
+                <tr>
+                  <td align="right" style="padding:0;">
+                    <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:280px;">
+                      <tr>
+                        <td align="right" style="padding:8px 0;font-size:14px;color:#666;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Subtotal:</td>
+                        <td align="right" width="110" style="padding:8px 0;font-size:14px;color:#333;font-weight:500;font-family:Segoe UI,Helvetica,Arial,sans-serif;">&#36;${formatCOP(pedido.subtotal)}</td>
+                      </tr>
+                      <tr>
+                        <td align="right" style="padding:8px 0;font-size:14px;color:#666;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Envio:</td>
+                        <td align="right" style="padding:8px 0;font-size:14px;color:#333;font-weight:500;font-family:Segoe UI,Helvetica,Arial,sans-serif;">&#36;${formatCOP(pedido.envio ?? 0)}</td>
+                      </tr>
+                      <tr>
+                        <td align="right" style="padding:12px 0 8px;font-size:16px;color:rgb(97, 24, 11);font-weight:700;border-top:2px solid #efd3d0;font-family:Segoe UI,Helvetica,Arial,sans-serif;">Total a despachar:</td>
+                        <td align="right" style="padding:12px 0 8px;font-size:16px;color:rgb(97, 24, 11);font-weight:700;border-top:2px solid #efd3d0;font-family:Segoe UI,Helvetica,Arial,sans-serif;">&#36;${formatCOP(pedido.total)} COP</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:20px 0 0;font-size:12px;color:#999;font-family:Segoe UI,Helvetica,Arial,sans-serif;">No. de orden: <span style="color:#666;font-family:Consolas,monospace;">${order_id}</span><br>Transaccion Bold: <span style="color:#666;font-family:Consolas,monospace;">${payment_id ?? "N/A"}</span></p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="background:#f8f9fa;padding:20px;text-align:center;font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:12px;color:#aaa;border-top:1px solid #eee;">
+              <p style="margin:0;">Sistema interno Emarizos</p>
+            </td>
+          </tr>
         </table>
-        <h3 style="margin-top:20px;">Detalle del pedido</h3>
-        <table style="width:100%;border-collapse:collapse;margin:8px 0;">
-          <thead><tr style="background:#f5f5f5;">
-            <th style="padding:8px 12px;text-align:left;">Producto</th>
-            <th style="padding:8px 12px;text-align:center;">Cant.</th>
-            <th style="padding:8px 12px;text-align:right;">Subtotal</th>
-          </tr></thead>
-          <tbody>${itemsHTML}</tbody>
-        </table>
-        <table style="width:100%;margin-top:8px;">
-          <tr><td style="padding:4px 12px;">Subtotal</td><td style="padding:4px 12px;text-align:right;">&#36;${formatCOP(pedido.subtotal)}</td></tr>
-          <tr><td style="padding:4px 12px;">Envio</td><td style="padding:4px 12px;text-align:right;">&#36;${formatCOP(pedido.envio ?? 0)}</td></tr>
-          <tr style="font-weight:bold;font-size:16px;"><td style="padding:8px 12px;">Total a despachar</td><td style="padding:8px 12px;text-align:right;">&#36;${formatCOP(pedido.total)} COP</td></tr>
-        </table>
-        <p style="margin-top:16px;font-size:13px;color:#666;">No. de orden: <code>${order_id}</code><br/>Transaccion Bold: <code>${payment_id ?? "N/A"}</code></p>
-      </div>
-      <div style="background:#f5f5f5;padding:16px;text-align:center;font-size:12px;color:#999;">Sistema interno Emarizos</div>
-    </div>`;
+      </td>
+    </tr>
+  </table>
+  </body>
+  </html>`;
 }
 
 // ─── Lógica principal de venta aprobada (reutilizable) ───────────────────────
